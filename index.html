@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>습관 체크</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Malgun Gothic", sans-serif; max-width: 480px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; }
+  #warning { background: #fff3cd; border: 1px solid #e0c060; padding: 8px 12px; margin-bottom: 12px; }
+  #add-form { display: flex; gap: 8px; margin-bottom: 8px; }
+  #name-input { flex: 1; min-width: 0; padding: 8px; font-size: 16px; }
+  #add-form button { padding: 8px 14px; font-size: 16px; white-space: nowrap; }
+  h2 { font-size: 16px; margin: 16px 0 4px; }
+  #message { color: #b00020; min-height: 1.2em; margin: 0 0 12px; font-size: 14px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #ddd; }
+  .check { flex: none; width: 40px; height: 40px; font-size: 22px; line-height: 1; cursor: pointer; background: #fff; border: 2px solid #4caf50; border-radius: 6px; color: #fff; }
+  .check[aria-pressed="true"] { background: #4caf50; }
+  .name { flex: 1; word-break: break-all; }
+  .name.done { text-decoration: line-through; color: #888; }
+  .delete { flex: none; width: 40px; height: 40px; cursor: pointer; }
+  #empty { color: #444; padding: 12px 0; }
+</style>
+</head>
+<body>
+  <h1>습관 체크</h1>
+  <div id="warning" hidden>기록을 저장할 수 없어요. 브라우저(Chrome, Edge 등)에서 index.html을 직접 열어 주세요.</div>
+
+  <form id="add-form">
+    <input id="name-input" type="text" maxlength="20" placeholder="새 습관 이름" autocomplete="off">
+    <button type="submit">추가</button>
+  </form>
+  <p id="message" role="status"></p>
+
+  <h2>오늘 체크 목록</h2>
+  <ul id="list"></ul>
+  <p id="empty" hidden>아직 습관이 없어요. 위에서 습관을 추가해 보세요.</p>
+
+<script>
+(function () {
+  var STORAGE_KEY = 'habit-tracker-v1';
+  var MAX_HABITS = 10;
+  var MAX_NAME = 20;
+
+  var state = { habits: [] };
+  var storageOk = true;
+
+  var listEl = document.getElementById('list');
+  var emptyEl = document.getElementById('empty');
+  var warningEl = document.getElementById('warning');
+  var messageEl = document.getElementById('message');
+  var formEl = document.getElementById('add-form');
+  var inputEl = document.getElementById('name-input');
+
+  // 로컬 시간 기준 YYYY-MM-DD (toISOString은 UTC라 쓰지 않는다)
+  function dateKey(d) {
+    var m = d.getMonth() + 1;
+    var day = d.getDate();
+    return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+  }
+
+  function newId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 4);
+  }
+
+  function isValidHabit(h) {
+    return h && typeof h.id === 'string' && typeof h.name === 'string' &&
+      h.done && typeof h.done === 'object' && !Array.isArray(h.done);
+  }
+
+  function load() {
+    var raw;
+    try {
+      raw = localStorage.getItem(STORAGE_KEY);
+    } catch (e) {
+      storageOk = false;
+      return;
+    }
+    if (raw === null) return;
+    try {
+      var data = JSON.parse(raw);
+      if (!data || !Array.isArray(data.habits) || !data.habits.every(isValidHabit)) {
+        throw new Error('bad shape');
+      }
+      state = data;
+    } catch (e) {
+      state = { habits: [] };
+      storageOk = false;
+    }
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      storageOk = false;
+    }
+  }
+
+  function render() {
+    var today = dateKey(new Date());
+    warningEl.hidden = storageOk;
+    emptyEl.hidden = state.habits.length > 0;
+    listEl.textContent = '';
+
+    state.habits.forEach(function (habit) {
+      var done = !!habit.done[today];
+
+      var li = document.createElement('li');
+
+      var check = document.createElement('button');
+      check.type = 'button';
+      check.className = 'check';
+      check.textContent = done ? '✓' : '';
+      check.setAttribute('aria-pressed', done ? 'true' : 'false');
+      check.setAttribute('aria-label', habit.name + ' 오늘 체크');
+      check.addEventListener('click', function () { toggleToday(habit.id); });
+
+      var name = document.createElement('span');
+      name.className = 'name' + (done ? ' done' : '');
+      name.textContent = habit.name;
+
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'delete';
+      del.textContent = '✕';
+      del.setAttribute('aria-label', habit.name + ' 삭제');
+      del.addEventListener('click', function () { removeHabit(habit.id); });
+
+      li.appendChild(check);
+      li.appendChild(name);
+      li.appendChild(del);
+      listEl.appendChild(li);
+    });
+  }
+
+  function commit() {
+    save();
+    render();
+  }
+
+  function addHabit(rawName) {
+    var name = rawName.trim();
+    if (!name) return false;
+    if (state.habits.length >= MAX_HABITS) {
+      messageEl.textContent = '습관은 최대 ' + MAX_HABITS + '개까지 추가할 수 있어요';
+      return false;
+    }
+    state.habits.push({ id: newId(), name: name.slice(0, MAX_NAME), done: {} });
+    messageEl.textContent = '';
+    commit();
+    return true;
+  }
+
+  function removeHabit(id) {
+    var habit = state.habits.find(function (h) { return h.id === id; });
+    if (!habit) return;
+    if (!confirm("'" + habit.name + "' 습관을 삭제할까요? 기록도 함께 사라집니다.")) return;
+    state.habits = state.habits.filter(function (h) { return h.id !== id; });
+    messageEl.textContent = '';
+    commit();
+  }
+
+  function toggleToday(id) {
+    var habit = state.habits.find(function (h) { return h.id === id; });
+    if (!habit) return;
+    var today = dateKey(new Date());
+    if (habit.done[today]) delete habit.done[today];
+    else habit.done[today] = true;
+    commit();
+  }
+
+  formEl.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (addHabit(inputEl.value)) inputEl.value = '';
+    inputEl.focus();
+  });
+
+  load();
+  render();
+})();
+</script>
+</body>
+</html>
